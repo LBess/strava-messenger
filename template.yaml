@@ -1,0 +1,72 @@
+# The AWSTemplateFormatVersion identifies the capabilities of the template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  strava-messenger
+
+# Transform section specifies one or more macros that AWS CloudFormation uses to process your template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html
+Transform:
+- AWS::Serverless-2016-10-31
+
+Resources:
+  StravaMessengerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: strava_messenger/
+      Handler: app.handler
+      Runtime: python3.8
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 100
+      Description: A Lambda function that returns a static string.
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Role: !GetAtt ParameterStoreStravaFunctionRoleDev.Arn
+      Events:
+        Activity:
+          Type: Api
+          Properties:
+            Path: /activity
+            Method: post
+        Subscribe:
+          Type: Api
+          Properties:
+            Path: /activity
+            Method: get
+  
+  ParameterStoreStravaFunctionRoleDev:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: 'ParameterStoreParameterAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter*'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*'
+
+Outputs:
+  StravaMessengerApi:
+    Description: "API Gateway endpoint URL for Prod stage for the Strava Messenger Function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/activity/"
+  StravaMessengerFunction:
+    Description: "Strava Messenger Lambda Function ARN"
+    Value: !GetAtt StravaMessengerFunction.Arn
+  StravaMessengerFunctionIamRole:
+    Description: "IAM Role created for Lambda"
+    Value: !GetAtt ParameterStoreStravaFunctionRoleDev.Arn
