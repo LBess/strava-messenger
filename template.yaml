@@ -59,7 +59,7 @@ Resources:
                 Action:
                   - 'ssm:GetParameter*'
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*'
-
+  
 Outputs:
   StravaMessengerApi:
     Description: "API Gateway endpoint URL for Prod stage for the Strava Messenger Function"

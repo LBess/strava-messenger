@@ -1,9 +1,15 @@
 import json
+from random import randint
 import boto3
 
+# ParameterStore variable names
 VERIFY_TOKEN_PARAMETER_NAME = "strava_messenger_verification_token"
-SNS_TOPIC_ARN = "arn:aws:sns:us-east-1:650994256587:strava-motivation"
-SUBSCRIPTION_ID = 222977
+STRAVA_SUBSCRIPTION_ID_PARAMETER_NAME = "strava_api_subscription_id"
+SNS_TOPIC_ARN_PARAMETER_NAME = "strava_messenger_sns_topic_arn"
+
+DYNAMO_TABLE_NAME = "Messages"
+
+# Strava Webhook API constants
 OBJECT_TYPE_ACTIVITY = "activity"
 ASPECT_TYPE_CREATE = "create"
 
@@ -20,9 +26,7 @@ def handleSubscriptionRequest(queryStringParameters):
     ------
     HTTP Body: dict
     """
-
     print("START handle Strava subscription validation request")
-    print(queryStringParameters)
 
     ssmClient = boto3.client("ssm")
     parameterResponse = ssmClient.get_parameter(Name=VERIFY_TOKEN_PARAMETER_NAME)
@@ -39,28 +43,45 @@ def handleActivityPost(body):
     """Handle Strava activity post
     """
     print("START handle Strava activity post")
-    print(body)
     
-    if body["subscription_id"] != SUBSCRIPTION_ID:
+    ssmClient = boto3.client("ssm")
+    parameterResponse = ssmClient.get_parameter(Name=STRAVA_SUBSCRIPTION_ID_PARAMETER_NAME)
+    subscriptionId = int(parameterResponse["Parameter"]["Value"])
+    if body["subscription_id"] != subscriptionId:
         raise Exception("Invalid subscription_id")
         
     if body["object_type"] != OBJECT_TYPE_ACTIVITY:
-        return {
-            "message": "object_type is not activity"
-        }
+        raise Exception(f"object_type does not equal {OBJECT_TYPE_ACTIVITY}")
     
     if body["aspect_type"] != ASPECT_TYPE_CREATE:
-        return {
-            "message": f"aspect_type is not {ASPECT_TYPE_CREATE}"
+        raise Exception(f"aspect_type does not eqaul {ASPECT_TYPE_CREATE}")
+
+    # Query the message table
+    print("Querying DynamoDB...")
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(DYNAMO_TABLE_NAME)
+    # Choose a random value from the table
+    dbResponse = table.get_item(
+        Key={
+            "ID": str(randint(0, table.item_count - 1))
         }
+    )
 
-
+    # Build the message
+    motivationMessage = dbResponse["Item"]["Message"]
     stravaActivityId = body["object_id"]
-    snsSubject = f"Strava Activity {stravaActivityId}"
-    snsMessage = "I\'m the boss of this gym."
+    snsMessage = f"{motivationMessage}\n\n Strava Activity {stravaActivityId}"
 
+    # Send the message
+    print(f"SNS message: {snsMessage}")
+    parameterResponse = ssmClient.get_parameter(Name=SNS_TOPIC_ARN_PARAMETER_NAME)
+    snsTopicArn = parameterResponse["Parameter"]["Value"]
     snsClient = boto3.client("sns")
-    snsClient.publish(TopicArn=SNS_TOPIC_ARN, Message=snsMessage, Subject=snsSubject)
+    snsClient.publish(TopicArn=snsTopicArn, Message=snsMessage, Subject=f"Strava Activity {stravaActivityId}")
+
+    # TODO: Get the owner_id for myself and remove this print
+    ownerId = body["owner_id"]
+    print(f"owner_id: {ownerId}")
 
     return {
         "message": "success"
@@ -96,17 +117,13 @@ def handler(event, context):
         if (len(e.args) > 0):
             errorMessage = e.args[0]
         else:
-            "An error occurred"
+            errorMessage = "An unspecified error occurred"
 
     if errorMessage != "":
-        print(f"Error: {errorMessage}")
-        return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "error": errorMessage
-            })
-        }
+        responseBody["error"] = errorMessage
     
+    # Since we are returning through the API gateway, we have to include a number
+    # of these fields.
     return {
         "isBase64Encoded": False,
         "statusCode": 200,
